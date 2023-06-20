@@ -1,4 +1,4 @@
-# R: 3 hours from 0 to Expert :)
+# Lec 1 R
 
 - Lab Data, Exercise, and Answer
 - Link to download data
