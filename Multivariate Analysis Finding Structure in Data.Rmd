@@ -1,0 +1,512 @@
+---
+title: 'Multivariate Analysis: Finding Structure in Data'
+author: "Or Goldreich"
+date: "2023-06-21"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+# Seeding
+set.seed(1729)
+
+# Loading libraries
+library(tidyverse)
+library(MASS)
+library(Matrix)
+library(gap)
+
+options(width=70, digits=4, scipen=8)
+def.chunk.hook  <- knitr::knit_hooks$get("chunk")
+knitr::knit_hooks$set(chunk = function(x, options) {
+  x <- def.chunk.hook(x, options)
+  ifelse(options$size != "normalsize", paste0("\\", options$size,"\n\n", x, "\n\n \\normalsize"), x)
+})
+
+# Set R output size a bit smaller than default
+knitr::opts_chunk$set(size='small')
+
+pkgs_needed = c("dbscan","tidyverse","GGally", "pheatmap",
+                "flowCore","flowViz","flowPeaks", "ggcyto") # packages for cytometry data analysis)
+letsinstall = setdiff(pkgs_needed, installed.packages()) 
+if (length(letsinstall) > 0) {
+  BiocManager::install(letsinstall)
+}
+```
+
+## Obtain Data 
+
+In this lab we will be working with the following two simple datasets:
+
+```{r}
+turtles = read.table(url("https://web.stanford.edu/class/bios221/data/PaintedTurtles.txt"),
+                     header=TRUE)
+head(turtles)
+```
+
+```{r}
+download.file(url = "https://web.stanford.edu/class/bios221/data/athletes.RData",
+              destfile = "athletes.RData",mode = "wb")
+load("athletes.RData")
+athletes[1:3,]
+```
+
+## Low dimensional data summaries and preparation
+
+It is instructive to first consider 2-dimensional summaries of the datasets:
+
+```{r}
+library("GGally")
+ggpairs(turtles[,-1], axisLabels="none")
+```
+
+Can you do the same for the athletes data?
+
+```{r}
+
+```
+
+Correlations can be displayed on a color scale by a simple call to the `pheatmap` function:
+
+```{r heatmapathletes}
+library("pheatmap")
+pheatmap(cor(athletes),cell.width=10,cell.height=10)
+```
+
+## Preprocessing the data
+
+Our first task in data analysis is to transform the data: standardizing the data 
+to a common standard deviation. This rescaling is done using the `scale` 
+function which makes every column have a variance of 1 (and also mean 0).
+
+```{r turtlesDim12}
+scaledTurtles=data.frame(scale(turtles[,-1]),sex=turtles[,1])
+ggplot(scaledTurtles,aes(x=width,y=height, group =sex)) +
+  geom_point(aes(color=sex))
+```
+
+## Dimension reduction
+
+```{r}
+library("ggplot2")
+athletes = scale(athletes)
+n = nrow(athletes)
+athletes = data.frame(athletes)
+```
+
+We plot the datapoints and the projection of each one of them onto the x-axis:
+
+```{r SimpleScatter}
+p = ggplot(athletes, aes(x = weight,y=  disc)) +
+  geom_point(size = 2, shape=21)
+p + geom_point(aes(y = rep(0, n)), colour="red") +
+  geom_segment(aes(xend = weight, yend = rep(0,n)), linetype = "dashed")
+```
+
+Now try to make a similar plot showing projection lines onto the y 
+axis and show projected points in blue:
+
+```{r}
+
+```
+
+## Summarize 2D-data by a line
+
+We regress `disc` on `weight` with the `lm` function (linear model) to find the regression line; its slope (a) is given by the second coefficient in the output of `lm` and its intercept (b) is the first:
+
+```{r Reg1}
+reg1 = lm(disc ~ weight,data = athletes)
+a = reg1$coefficients[1] # Intercept
+b = reg1$coefficients[2] # slope
+pline = p + geom_abline(intercept = a, slope = b, col = "blue", lwd = 1.5)
+pline + geom_segment(aes(xend = weight, yend = reg1$fitted),
+                     colour = "red", arrow = arrow(length = unit(0.15,"cm")))
+```
+
+
+### A line that minimizes distances in both directions
+
+Now we will plot the line chosen to minimize the sum of squares of the orthogonal (perpendicular) projections of data points onto it; we call this the principal component line.
+
+```{r PCAmin}
+X = cbind(athletes$disc, athletes$weight)
+svda = svd(X)
+pc = X %*% svda$v[, 1] %*% t(svda$v[, 1])
+bp = svda$v[2, 1] / svda$v[1, 1]
+ap = mean(pc[, 2]) - bp * mean(pc[, 1])
+
+p + geom_segment(xend = pc[,1], yend = pc[,2]) + 
+  geom_abline(intercept = ap, slope = bp, col = "purple", lwd = 1.5) + 
+  coord_fixed()
+```
+
+
+## Turtle PCA
+
+Now let's continue inspecting the turtles data.
+
+```{r PCAturtlesunscaled}
+turtles3var = turtles[, -1]
+apply(turtles3var, 2, mean)
+```
+
+We start by looking at the variances of the three components in the **un**standardized case:
+
+```{r simplecomp}
+apply(turtles3var, 2, var)
+```
+
+Next we see that basically all 3 variables are very strongly correlated:
+
+```{r PCAturtles}
+turtlesc = scale(turtles3var)
+cor(turtlesc)
+```
+
+Because of the strong correlations, we would expect that the data matrix can be well approximated by a rank 1 matrix. Let's do the PCA:
+
+```{r}
+library("factoextra")
+pca1 = princomp(turtlesc)
+# or alternatively:
+#pca1 = ade4::dudi.pca(turtlesc, scannf = FALSE)
+pca1
+fviz_eig(pca1, geom = "bar", width = 0.4)
+```
+
+The scree plot showing the eigenvalues for the standardized data: one very large component in this case and two very small ones. In this case the data is (almost) one dimensional.
+
+
+**Question**: What is the percentage of variance
+explained by the first PC?
+
+**Answer:**
+
+```{r}
+
+```
+
+
+```{r turtlesbiplot}
+fviz_pca_biplot(pca1, label = "var", col.ind = turtles[,1]) 
+```
+
+Add ellipses for female and male groups to the plot above.
+
+```{r}
+fviz_pca_biplot(pca1, label = "var", col.ind = turtles[,1], addEllipses=TRUE) 
+```
+
+
+**Question**: Did the males or female turtles tend to be larger?
+
+**Answer:**
+The female turtles are larger.
+
+## Back to the athletes
+
+Now let us try to interpret another scree plot with more dimensions.
+
+```{r}
+library("ade4")
+pca.ath = dudi.pca(athletes, scannf = FALSE)
+pca.ath$eig
+```
+
+```{r}
+fviz_eig(pca.ath, geom = "bar", bar_width = 0.3) + ggtitle("")
+```
+
+The scree plot makes a clear drop after the second eigenvalue. This indicates a good approximation will be obtained at rank 2. Let’s look at an interpretation of the first two axes by projecting the loadings of the original (old) variables as they project onto the two new ones.
+
+```{r}
+fviz_pca_var(pca.ath, col.circle = "black") + ggtitle("")
+```
+
+**Note**
+
+It can seem paradoxical that the m variables are opposed to the others.
+
+**Question**: Why does this occur?
+
+We can make the variables align and give the left direction on PCA 1 to
+be an axis of athletic ability by changing the signs:
+
+```{r}
+athletes[, c(1, 5, 6, 10)] = -athletes[, c(1, 5, 6, 10)]
+cor(athletes) %>% round(1)
+```
+
+```{r}
+pcan.ath = dudi.pca(athletes, nf = 2, scannf = FALSE)
+pcan.ath$eig
+```
+
+```{r}
+fviz_pca_var(pcan.ath, col.circle="black") + ggtitle("")
+```
+
+\newpage
+
+## Hierarchical clustering
+
+The Morder data are gene expression measurements for 156 genes on T cells of 
+3 types (naïve, effector, memory) from 10 patients (Holmes et al. 2005).
+Here we load the `Morder` data.frame from the online directory.
+
+```{r}
+load(url("http://web.stanford.edu/class/bios221/data/Morder.RData"))
+dim(Morder)
+```
+
+In 'base' R a function to perform hierarchical clustering is `hclust()`.
+To cluster the genes with hierarchical clustering you first need
+to compute a distance matrix storing all pairwise (gene-to-gene)
+dissimilarities. The following commands are useful:
+
+```{r, fig.width=15, fig.height=8}
+D <- dist(t(Morder))
+gene_clust <- hclust(d = D)
+plot(gene_clust)
+```
+
+**Question**: Why in the provided code the input to `dist()`
+function is `t(Morder)`?
+
+Now, instead of clustering genes, apply hierarchical clustering
+for samples.
+
+```{r}
+# we don't transpose the matrix now (samples are rows)
+D_samples <- dist(Morder)
+sample_clust <- hclust(d = D_samples)
+plot(sample_clust)
+```
+
+\newpage
+
+## Mass cytometry (CyTOF)
+
+```{r}
+library("tidyverse")
+library("flowCore")
+library("flowViz")
+library("flowPeaks")
+library("ggcyto")
+```
+
+Cytometry is a biophysical technology that allows you to measure
+physical and chemical characteristics of cells. The determination of these characteristics is crucial in many research applications, including in medical fields including immunology, hematology, and oncology. Indeed, these physical properties are used to cluster cell types. We chose this example as mass/flow cytometry is a type of data that many of you at bio-X will potentially encounter.  
+
+Modern flow and mass 
+cytometry allows for simultaneous multiparametric analysis of thousands of 
+particles per second.
+
+[Flow cytometry](https://en.wikipedia.org/wiki/Flow_cytometry) enables the 
+simultaneous measurement of 15, whereas 
+[mass cytometry (CyTOF)](https://en.wikipedia.org/wiki/Mass_cytometry) of as 
+many as 40 proteins per single cell.
+
+We start by downloading and reading in a CyTOF dataset. The dataset 
+comes from a single-cell mass cytometry study by 
+[Bendall et al.](http://science.sciencemag.org/content/332/6030/687.full)
+on differential immune drug responsed across human hematopoietic cells
+over time.
+
+```{r}
+download.file(url = "http://web.stanford.edu/class/bios221/data/Bendall_2011.fcs",
+              destfile = "Bendall_2011.fcs",mode = "wb")
+fcsB = read.FCS("Bendall_2011.fcs")
+slotNames(fcsB)
+```
+
+**Question**: Look at the structure of the `fcsB` object (hint: the 
+`colnames` function). How many variables were measured? 
+
+**Answer**:
+```{r}
+
+```
+
+
+### Data preprocessing
+
+First we load the data table that reports the mapping between isotopes and 
+markers (antibodies); then, we replace the isotope names in the column 
+names of `fcsB` with the marker names. This is simply to make the subsequent 
+analysis and plotting code more readable.
+
+```{r}
+markersB = read_csv(url("http://web.stanford.edu/class/bios221/data/Bendall_2011_markers.csv"))
+mt = match(markersB$isotope, colnames(fcsB))
+stopifnot(!any(is.na(mt)))
+colnames(fcsB)[mt] = markersB$marker
+```
+
+Below, we show how to plot the joint distribution of the cell lengths and 
+the `DNA191` (indicates the activity of the cell whether cell is dead or alive).
+The information is included in the `fcsB` object (of class `flowFrame`).
+
+```{r}
+flowPlot(fcsB, plotParameters = c("Cell_length", "DNA191"), logy=TRUE)
+```
+
+It is standard to transform both flow and mass cytometry data using one of 
+several special functions, we take the example of the inverse hyperbolic sine 
+(arcsinh), which serves as a variance stabilizing transformation. 
+First, we show the distribution on untransformed raw data:
+
+```{r}
+# `densityplotvis()` is from `densityplot` package
+densityplot(~`CD3all`, fcsB)
+```
+
+To apply the transformation and to plot the data you can use functions
+from the `flowCore`` package. After the transformation the cells seem to 
+form two clusters: Based solely on one dimension (CD3all) we see two cell subsets 
+(the two modes).
+
+```{r}
+asinhT = arcsinhTransform(a = 0.1, b = 1)
+cols_to_transform <- setdiff(colnames(fcsB), c("Time", "Cell_length", "absoluteEventNumber"))
+trans1 = transformList(cols_to_transform, asinhT)
+fcsBT = transform(fcsB, trans1)
+densityplot(~`CD3all`, fcsBT)
+```
+
+Let's cluster cells into two groups using one-dimensional k-means filter.
+To learn more about the arguments of the functions type `?kmeansFilter`
+and `?flowCore::filter`
+
+```{r}
+kf = kmeansFilter("CD3all"=c("Pop1","Pop2"), filterId="myKmFilter")
+fres = filter(fcsBT, kf)
+summary(fres)
+```
+
+```{r}
+fcsBT1 = split(fcsBT, fres, population="Pop1")
+fcsBT2 = split(fcsBT, fres, population="Pop2")
+```
+
+We can also cluster cell with the `flowPeaks()` function from `flowPeaks` 
+package. The algorithm for this clustering algorithm is specified
+in detail in a paper by
+[Ge Y. et al (2012)](https://academic.oup.com/bioinformatics/article/28/15/2052/236255).
+
+
+```{r}
+dat = data.frame(exprs(fcsBT)[ , c("CD56", "CD3all")])
+fp = flowPeaks(dat)
+plot(fp)
+```
+
+**Question**: How many dimensions (markers) does the above code use 
+to split the data into 4 cell subsets using k-means?
+
+A Bioconductor package ``ggcyto`` build on top of ``ggplot2`` 
+includes functions for generating visualizations specifically
+for cytometry data. Note that here `fcsB` or `fcsBT` are not 
+'data.frames' but objects of class  'flowFrame'. This means
+that you cannot use `fcsB` and `fcsBT`  (without conversion to data.frame)
+as inputs to `ggplot()`. 'flowFrame' objects hold marker expression
+data and sample information data, so you can access any variables you need.
+
+```{r ggcytoCD4CD8}
+library("ggcyto")
+# Untransformed data
+ggcyto(fcsB,aes(x = CD4)) + geom_histogram(bins = 60) 
+```
+
+
+```{r}
+# Transformed data
+ggcyto(fcsBT, aes(x=CD4)) + geom_histogram(bins=90) 
+```
+
+```{r}
+# ggcyto automatic plotting
+autoplot(fcsBT, "CD4")
+```
+
+```{r}
+ggcyto(fcsBT, aes(x = CD4, y = CD8)) + geom_density2d(colour="black") 
+```
+
+```{r}
+ggcyto(fcsBT, aes(x = CD4, y = CD8)) + geom_hex(bins = 50) 
+```
+
+
+```{r}
+# ggcyto automatic plotting
+autoplot(fcsBT, "CD4", "CD8", bins = 50)
+```
+
+
+## Validating and choosing the number of clusters
+
+The clustering methods we have described are tailored to deliver the best 
+grouping of the data under various constrains, however they will always deliver 
+groups, even if there are none. This is important, e.g. when performing
+kmeans clustering, as we have to set the 'k' parameter (for the number
+of clusters to group observations into) ahead of time. What choice of 'k'
+is valid though?
+
+Here we want to illustate the use of the "wss" (within sum of squares) statistic 
+to evaluate the quality of a clustering. Note that as $k$ (number of cluster for 
+k-means algorithm) increases, wss will also decrease. We simulate data coming 
+from 4 groups. In particular, we generate 2-dimensional observations
+(as if there were only 2 proteins measured for each cell). The four groups
+are generated from 2-d multivariate normals with centers at
+$\mu_1 = (0, 0)$, $\mu_2 = (0, 8)$, $\mu_3 = (8, 0)$, $\mu_4 = (8, 8)$.
+In this simulation, we know the ground truth (4 groups), but we will
+try to cluster the data using the `kmeans` argorithm with different choices for the 'k'
+parameter. We will see how the wss statistic varies as we vary `k`.
+
+We have  used the `%>%` operator from the ``dplyr`` package (if you do not 
+understand the code, try to see what `simul4` contains and repeat the same using
+code that does not use the `%>%` operator).
+
+```{r Fake4}
+simul4 = lapply(c(0,8), function(x){
+  lapply(c(0,8), function(y){
+    data.frame(x = rnorm(100, x, 2),
+               y = rnorm(100, y, 2), 
+               class = paste(x, y, sep = "")
+    )
+  }) %>% do.call(rbind,.)
+}) %>% do.call(rbind,.)
+```
+
+```{r}
+ggplot(simul4, aes(x = x, y = y)) +
+  geom_point(aes(color = class), size = 2)
+```
+
+
+
+```{r}
+# Compute the kmeans within group wss for k=1 to 12
+wss = rep(0,8)
+# for a single cluster the WSS statistic is just sum of squares of centered data
+wss[1] = sum(apply(scale(simul4[,1:2], scale = F), 2, function(x){ x^2 }))
+# for k = 2, 3, ... we perform kmeans clustering and compute the associated WSS statistic
+for (k in 2:8) {
+  km4 <- kmeans(simul4[,1:2],k)
+    wss[k] =  sum(km4$withinss)
+}
+# Now, we are ready to plot the computed statistic:
+ggplot(data.frame(k = 1:length(wss), wss = wss)) +
+  geom_point(aes(x = k, y = wss), color = "blue", size= 3) +
+  xlab('k') + ylab('WSS(k)')
+```
+
+
+Within sum of squares (wss) statistic, we see that the last substantial decrease
+of the statistic occurres before $k=4$, and for values $k = 5, 6, \dots$
+the quantity 'levels-off'. In practice, we would choose $k=4$, a value
+happening at the 'elbow' of the plot (elbow-rul). Of course this choice is 
+still somewhat subjective. The book chapter describes additional ways of
+choosing `k` (e.g. the gap statistic).
